@@ -1,0 +1,31 @@
+# Optional: Postgres in Docker for fully local API data.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.localdb.yml up --build
+# Still set UPSTASH_* and LLM keys in server/.env (see README).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: healthcoach
+      POSTGRES_PASSWORD: healthcoach
+      POSTGRES_DB: healthcoach
+    ports:
+      - "5432:5432"
+    volumes:
+      - coach_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U healthcoach -d healthcoach"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  api:
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://healthcoach:healthcoach@db:5432/healthcoach
+
+volumes:
+  coach_pg_data:
