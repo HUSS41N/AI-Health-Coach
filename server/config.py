@@ -17,9 +17,11 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
-    anthropic_model: str = "claude-3-5-haiku-20241022"
+
+    groq_api_key: str | None = None
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
 
     short_term_message_limit: int = 15
     summary_every_n_user_messages: int = 10

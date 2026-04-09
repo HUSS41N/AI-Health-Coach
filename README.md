@@ -13,7 +13,7 @@ WhatsApp-style **AI health coach** with a **FastAPI** backend, **PostgreSQL** me
 | **Database** | PostgreSQL (Neon-compatible), SQLAlchemy 2.x, psycopg3 |
 | **Cache / rate limit** | Redis via **Upstash** REST (`upstash-redis`) |
 | **LLM (primary)** | OpenAI Chat Completions (streaming + JSON mode) |
-| **LLM (fallback)** | Anthropic Messages API (streaming) |
+| **LLM (fallback)** | Groq OpenAI-compatible API (`llama-3.3-70b-versatile`, streaming) |
 | **Containers** | Docker, Docker Compose (`api` + `ui`) |
 
 **Constraints:** No vector DB / embeddings. Episodic recall uses **PostgreSQL `tags` array overlap** + keyword extraction.
@@ -53,7 +53,7 @@ flowchart TB
   CHAT --> PROT
   CHAT --> PG[(PostgreSQL)]
   CHAT --> RD[(Redis)]
-  INT --> LLM1[OpenAI / Anthropic]
+  INT --> LLM1[OpenAI / Groq]
   QA --> LLM1
   LT --> LLM1
   SM --> LLM1
@@ -203,19 +203,19 @@ Used to build the **system prompt** before streaming.
 
 ## LLM models: who uses what (and why)
 
-All model names come from **environment** (`OPENAI_MODEL`, `ANTHROPIC_MODEL` in `server/.env`; see `server/.env.example`). **Primary** provider is OpenAI when `OPENAI_API_KEY` is set; **Anthropic** is used automatically if OpenAI errors or is unset (same pattern everywhere).
+Model names come from **environment** (`OPENAI_MODEL`, `GROQ_MODEL` in `server/.env`; see `server/.env.example`). **Primary** provider is OpenAI when `OPENAI_API_KEY` is set; **Groq** (OpenAI-compatible client, default **Llama 3.3 70B Versatile**) is used if OpenAI errors or is unset.
 
 | Component | Provider call | Typical default model | Why this setup |
 |-----------|----------------|----------------------|----------------|
 | **Main coach reply** (streaming) | `LLMClient.stream_assistant` | `gpt-4.1-mini` (or your `OPENAI_MODEL`) | Fast GPT-4.1-class mini; good for conversational coaching; streaming keeps the UI responsive. |
-| **Intent classifier** | `complete_json_chat` | Same models | Small JSON schema (`intent`, `entities`, `urgency`); needs reliable structured output → OpenAI JSON mode, Anthropic with JSON instructions. |
+| **Intent classifier** | `complete_json_chat` | Same stack | Small JSON schema (`intent`, `entities`, `urgency`); OpenAI JSON mode or Groq with JSON / plain parse fallback. |
 | **Question agent** (quick-reply chips) | `complete_json_chat` | Same | Only for `health_query` / `onboarding` when not using anxiety/fever scales; short JSON, same stack as intent. |
 | **Long-term profile extract** (post-turn, background) | `complete_json_chat` | Same | Runs after the user message is saved; occasional JSON extract into `user_memory`. |
 | **Rolling conversation summary** (background) | `complete_json_chat` | Same | Throttled (every *N* user messages); merges prior summary + recent lines into one JSON `summary`. |
 | **Protocol engine** | — | *no LLM* | Rule-based triage for speed and determinism. |
 | **Episodic store** | — | *no LLM* | Keyword/tags + Postgres overlap query. |
 
-**Choosing models:** default in repo is `gpt-4.1-mini`; override with `OPENAI_MODEL` if you prefer another id (e.g. `gpt-4o-mini`). JSON agents use the **same** `OPENAI_MODEL` / `ANTHROPIC_MODEL` as the stream (single config surface).
+**Choosing models:** default OpenAI is `gpt-4.1-mini` (`OPENAI_MODEL`). Fallback is `GROQ_MODEL=llama-3.3-70b-versatile` when `GROQ_API_KEY` is set. JSON agents follow the same OpenAI → Groq order.
 
 ---
 
@@ -227,7 +227,7 @@ This repo reduces hot-path latency by:
 
 - **Overlapping** the **intent** LLM call with **memory context** loading (DB + Redis) on a small thread pool.
 - **One** short-term message load per turn (returned with `MemoryContext` for the main LLM) instead of two identical cache/DB passes.
-- **Reused OpenAI / Anthropic HTTP clients** (connection pooling, fewer TLS handshakes).
+- **Reused OpenAI + Groq HTTP clients** (OpenAI SDK with Groq `base_url`; connection pooling).
 - **In-process cache** for agent prompt strings after first resolve (still invalidated on admin prompt edits; Redis remains optional cross-instance layer).
 - **Startup `warm_agent_prompts()`** so the first chat turn does not cold-load every prompt from Redis/DB.
 - **Quieter `httpx` / `httpcore` logs** (WARNING) so Docker logs are readable.
@@ -242,7 +242,7 @@ Further gains (if you need them): use **local Redis** (TCP, pipelines) instead o
 
 - **Input:** latest user message.  
 - **Output (JSON):** `intent` (`health_query` | `casual` | `emergency` | `onboarding`), `entities[]`, `urgency`.  
-- **Uses:** `complete_json_chat` → OpenAI JSON, fallback Anthropic.
+- **Uses:** `complete_json_chat` → OpenAI JSON, fallback Groq.
 
 ### 2. Protocol engine (`protocol/engine.py`)
 
@@ -273,7 +273,7 @@ Further gains (if you need them): use **local Redis** (TCP, pipelines) instead o
 3. **Join** intent → **Protocol** + intent boost.  
 4. If onboarding **active** and not emergency → **onboarding agent** → SSE **`ui`** (empty interactive) → single assistant reply → **`done`** (skip main stream; background memory task skipped for that turn).  
 5. Else **Question agent** → SSE **`ui`**.  
-6. **Stream** tokens with OpenAI, fallback Anthropic.  
+6. **Stream** tokens with OpenAI, fallback Groq.  
 7. Persist assistant row → SSE **`done`** (includes updated **`onboarding`** when applicable).  
 8. **Background:** long-term, episodic, summary throttle; cache invalidation (skipped when `skip_memory` is set).
 
@@ -306,7 +306,7 @@ OpenAPI: `/docs`.
 - **`/admin`** — user overview + editable agent prompts (no auth in this personal build).  
 - **`/health`** — backend status widget.
 
-**Env (UI build):** `NEXT_PUBLIC_API_URL` (e.g. `http://localhost:8000`) for browser → API.
+**Env (UI):** `ui/.env` (see `ui/.env.example`). Set **`NEXT_PUBLIC_API_URL`** to the FastAPI base URL (no trailing slash), e.g. `http://localhost:8000`. Next.js inlines this at **build** time for client bundles; Docker uses the `NEXT_PUBLIC_API_URL` **build arg** in `docker-compose.yml`.
 
 ---
 
@@ -317,7 +317,7 @@ See `server/.env.example`. Important keys:
 - `DATABASE_URL` — PostgreSQL (e.g. Neon, `sslmode=require`).  
 - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`  
 - `CORS_ORIGINS` — comma-separated browser origins  
-- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (at least one for chat)  
+- `OPENAI_API_KEY` and/or `GROQ_API_KEY` (at least one for chat; Groq is fallback)  
 
 Tunable in `config.py`: message limits, summary interval, rate limits, cache TTLs.
 
@@ -340,7 +340,7 @@ uvicorn main:app --reload --port 8000
 ```bash
 cd ui
 npm install
-export NEXT_PUBLIC_API_URL=http://localhost:8000
+cp .env.example .env   # edit NEXT_PUBLIC_API_URL if the API is not on localhost:8000
 npm run dev
 ```
 
@@ -362,7 +362,7 @@ Ensure `server/.env` exists for the API container (`env_file` in Compose).
 | `safety_rules.py` | `check_safety` — emergency / self-harm / medication keyword overrides (no LLM) |
 | `output_filter.py` | `filter_output` — post-LLM block on dosage / prescribing patterns before DB persist |
 | `rate_limiter.py` | `check_rate_limit` (Redis `rate:{user_id}:{minute}`, default **10/min**), `check_duplicate_message` |
-| `llm_wrapper.py` | `safe_json_completion`, `safe_stream_assistant`, `safe_llm_call` — retries + OpenAI → Anthropic fallback |
+| `llm_wrapper.py` | `safe_json_completion`, `safe_stream_assistant`, `safe_llm_call` — retries + OpenAI → Groq fallback |
 | `exceptions.py` | Shared guardrail exception types |
 
 `/chat/stream` applies: prepare → rate limit → duplicate check → (persist user) → safety override short-circuit → intent/memory → stream via wrapper → `filter_output` on stored assistant text. Background memory work is skipped for sanitization/safety short-circuits and some error paths (`capture["skip_memory"]`). Env: `GUARDRAIL_MAX_MESSAGE_CHARS`, `GUARDRAIL_RATE_LIMIT_PER_MINUTE`, `GUARDRAIL_JSON_RETRIES`.

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { apiBase } from "@/lib/api";
 
 type HealthPayload = {
   status: string;

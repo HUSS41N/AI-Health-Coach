@@ -38,8 +38,9 @@ def safe_json_completion(system: str, user: str) -> tuple[dict[str, Any], str]:
     """
     JSON chat completion with per-provider retries, then cross-provider fallback.
     Max attempts per provider = guardrail_json_retries (default 2).
+    Order: OpenAI → Groq (OpenAI-compatible).
     """
-    from llm.client import _get_anthropic, _get_openai
+    from llm.client import _get_groq, _get_openai
 
     settings = get_settings()
     attempts = max(1, settings.guardrail_json_retries)
@@ -85,38 +86,61 @@ def safe_json_completion(system: str, user: str) -> tuple[dict[str, Any], str]:
             if attempt < attempts - 1:
                 time.sleep(0.35 * (attempt + 1))
 
-    aclient = _get_anthropic()
-    if not aclient:
+    gclient = _get_groq()
+    if not gclient:
         logger.error("guardrails: no LLM provider available: %s", last_err)
         return {}, "none"
 
+    groq_system = (
+        system
+        + "\nRespond with a single valid JSON object only, no markdown or prose outside JSON."
+    )
     for attempt in range(attempts):
         try:
-            msg = aclient.messages.create(
-                model=settings.anthropic_model,
-                max_tokens=1024,
-                temperature=0.2,
-                system=system
-                + "\nRespond with a single valid JSON object only, no markdown.",
-                messages=[{"role": "user", "content": user}],
-            )
-            raw = ""
-            for block in msg.content:
-                if block.type == "text":
-                    raw += block.text
+            try:
+                resp = gclient.chat.completions.create(
+                    model=settings.groq_model,
+                    messages=[
+                        {"role": "system", "content": groq_system},
+                        {"role": "user", "content": user},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                )
+            except Exception as e:
+                logger.debug(
+                    "guardrails: Groq json_object mode skipped or failed: %s",
+                    e,
+                )
+                resp = gclient.chat.completions.create(
+                    model=settings.groq_model,
+                    messages=[
+                        {"role": "system", "content": groq_system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=0.2,
+                )
+            raw = resp.choices[0].message.content or "{}"
             data = parse_json_object(raw)
-            return data, "anthropic"
+            return data, "groq"
         except json.JSONDecodeError as e:
             last_err = e
             logger.warning(
-                "guardrails: Anthropic JSON parse failed attempt=%s err=%s",
+                "guardrails: Groq JSON parse failed attempt=%s err=%s",
+                attempt + 1,
+                e,
+            )
+        except (APITimeoutError, APIError, RateLimitError) as e:
+            last_err = e
+            logger.warning(
+                "guardrails: Groq JSON completion failed attempt=%s err=%s",
                 attempt + 1,
                 e,
             )
         except Exception as e:
             last_err = e
             logger.warning(
-                "guardrails: Anthropic JSON completion failed attempt=%s err=%s",
+                "guardrails: Groq JSON unexpected error attempt=%s err=%s",
                 attempt + 1,
                 e,
             )
@@ -132,10 +156,10 @@ def safe_stream_assistant(
     user_messages: list[dict[str, str]],
 ) -> Iterator[tuple[str, str]]:
     """
-    Yields (provider_name, token_chunk). Falls back OpenAI → Anthropic → static text.
+    Yields (provider_name, token_chunk). Falls back OpenAI → Groq → static text.
     Each provider gets up to guardrail_json_retries streaming attempts.
     """
-    from llm.client import _get_anthropic, _get_openai
+    from llm.client import _get_groq, _get_openai
 
     settings = get_settings()
     attempts = max(1, settings.guardrail_json_retries)
@@ -170,24 +194,25 @@ def safe_stream_assistant(
             if attempt < attempts - 1:
                 time.sleep(0.35 * (attempt + 1))
 
-    aclient = _get_anthropic()
-    if aclient:
-        anth_msgs = [{"role": m["role"], "content": m["content"]} for m in user_messages]
+    gclient = _get_groq()
+    if gclient:
+        groq_msgs = [{"role": m["role"], "content": m["content"]} for m in user_messages]
         for attempt in range(attempts):
             try:
-                with aclient.messages.stream(
-                    model=settings.anthropic_model,
-                    max_tokens=2048,
+                stream = gclient.chat.completions.create(
+                    model=settings.groq_model,
+                    messages=[{"role": "system", "content": system}, *groq_msgs],
+                    stream=True,
                     temperature=0.7,
-                    system=system,
-                    messages=anth_msgs,
-                ) as stream:
-                    for text in stream.text_stream:
-                        yield "anthropic", text
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        yield "groq", delta.content
                 return
             except Exception as e:
                 logger.warning(
-                    "guardrails: Anthropic stream failed attempt=%s err=%s",
+                    "guardrails: Groq stream failed attempt=%s err=%s",
                     attempt + 1,
                     e,
                 )

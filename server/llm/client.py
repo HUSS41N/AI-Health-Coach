@@ -4,16 +4,15 @@ import threading
 from collections.abc import Iterator
 from typing import Any
 
-import anthropic
 import httpx
 from openai import OpenAI
 
 from config import get_settings
 
 _openai_lock = threading.Lock()
-_anthropic_lock = threading.Lock()
+_groq_lock = threading.Lock()
 _openai_client: OpenAI | None = None
-_anthropic_client: anthropic.Anthropic | None = None
+_groq_client: OpenAI | None = None
 
 
 def _get_openai() -> OpenAI | None:
@@ -32,19 +31,22 @@ def _get_openai() -> OpenAI | None:
         return _openai_client
 
 
-def _get_anthropic() -> anthropic.Anthropic | None:
-    global _anthropic_client
+def _get_groq() -> OpenAI | None:
+    """Groq OpenAI-compatible API (Llama, etc.)."""
+    global _groq_client
     settings = get_settings()
-    key = (settings.anthropic_api_key or "").strip()
+    key = (settings.groq_api_key or "").strip()
     if not key:
         return None
-    with _anthropic_lock:
-        if _anthropic_client is None:
-            _anthropic_client = anthropic.Anthropic(
+    base = (settings.groq_base_url or "https://api.groq.com/openai/v1").rstrip("/")
+    with _groq_lock:
+        if _groq_client is None:
+            _groq_client = OpenAI(
                 api_key=key,
-                timeout=settings.llm_timeout_seconds,
+                base_url=base,
+                timeout=httpx.Timeout(settings.llm_timeout_seconds),
             )
-        return _anthropic_client
+        return _groq_client
 
 
 def complete_json_chat(system: str, user: str) -> tuple[dict[str, Any], str]:
@@ -53,14 +55,14 @@ def complete_json_chat(system: str, user: str) -> tuple[dict[str, Any], str]:
 
     settings = get_settings()
     if not (settings.openai_api_key or "").strip() and not (
-        settings.anthropic_api_key or ""
+        settings.groq_api_key or ""
     ).strip():
-        raise RuntimeError("No LLM API keys configured for JSON completion")
+        raise RuntimeError("No LLM API keys configured for JSON completion (OpenAI or Groq)")
     return safe_json_completion(system, user)
 
 
 class LLMClient:
-    """Streams assistant text with OpenAI primary and Anthropic fallback."""
+    """Streams assistant text with OpenAI primary and Groq fallback."""
 
     def __init__(self) -> None:
         self.last_provider: str = "unknown"
