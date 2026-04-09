@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-4.1-mini"
     anthropic_model: str = "claude-3-5-haiku-20241022"
 
     short_term_message_limit: int = 15

@@ -14,8 +14,9 @@ type Props = {
   onClose: () => void;
 };
 
+/** Chip styles for dark chat surface (no `dark:` — app uses forced dark theme). */
 const CHOICE_BTN_CLASS =
-  "rounded-full border border-[#008069]/30 bg-[#008069]/10 px-3 py-1.5 text-left text-[13px] font-medium text-[#005c4b] transition active:scale-[0.98] disabled:opacity-50 dark:border-emerald-500/30 dark:bg-emerald-900/40 dark:text-emerald-100";
+  "rounded-full border border-teal-500/35 bg-teal-950/45 px-3 py-1.5 text-left text-[13px] font-medium text-teal-100 transition active:scale-[0.98] disabled:opacity-50";
 
 function ChoiceChips({
   choices,
@@ -44,7 +45,7 @@ function ChoiceChips({
 }
 
 /**
- * Quick replies / scale shown under the latest assistant bubble (tap without scrolling to the composer dock).
+ * Quick replies / scale under the latest assistant bubble only (no dock above the composer).
  */
 export function InlineInteractiveAttachments({
   payload,
@@ -88,58 +89,8 @@ export function InlineInteractiveAttachments({
           disabled={disabled}
           onSubmit={onScaleSubmit}
           onClose={onClose}
-          variant="inline"
         />
       </div>
-    );
-  }
-
-  return null;
-}
-
-export function InteractivePrompt({
-  payload,
-  disabled,
-  onChoice,
-  onScaleSubmit,
-  onClose,
-}: Props) {
-  if (!payload || payload.interaction === "none") return null;
-
-  if (payload.interaction === "choices" && payload.choices.length > 0) {
-    return (
-      <div className="border-t border-black/8 bg-white/95 px-3 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] dark:border-white/10 dark:bg-zinc-900/95">
-        <div className="mb-2 flex items-start justify-between gap-2">
-          <p className="text-[13px] font-medium leading-snug text-zinc-800 dark:text-zinc-100">
-            {payload.prompt || "Choose a quick reply or type below"}
-          </p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 text-xs text-zinc-500 underline"
-          >
-            Hide
-          </button>
-        </div>
-        <ChoiceChips
-          choices={payload.choices}
-          disabled={disabled}
-          onChoice={onChoice}
-        />
-      </div>
-    );
-  }
-
-  if (payload.interaction === "scale" && payload.scale) {
-    return (
-      <ScaleBlock
-        scale={payload.scale}
-        prompt={payload.prompt}
-        disabled={disabled}
-        onSubmit={onScaleSubmit}
-        onClose={onClose}
-        variant="dock"
-      />
     );
   }
 
@@ -152,51 +103,28 @@ function ScaleBlock({
   disabled,
   onSubmit,
   onClose,
-  variant,
 }: {
   scale: ScaleConfig;
   prompt: string;
   disabled?: boolean;
   onSubmit: (s: string) => void;
   onClose: () => void;
-  variant: "dock" | "inline";
 }) {
-  const shell =
-    variant === "dock"
-      ? "border-t border-black/8 bg-white/95 px-3 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] dark:border-white/10 dark:bg-zinc-900/95"
-      : "";
-
   return (
-    <div className={shell}>
+    <div>
       <div className="mb-2 flex items-start justify-between gap-2">
         <div>
-          <p
-            className={
-              variant === "dock"
-                ? "text-xs font-semibold uppercase tracking-wide text-[#008069] dark:text-emerald-400"
-                : "text-[10px] font-semibold uppercase tracking-wide text-teal-400/90"
-            }
-          >
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-400/90">
             {scale.title}
           </p>
-          <p
-            className={
-              variant === "dock"
-                ? "text-[13px] font-medium text-zinc-800 dark:text-zinc-100"
-                : "text-[12px] font-medium leading-snug text-[#c5d0d8]"
-            }
-          >
+          <p className="text-[12px] font-medium leading-snug text-[#c5d0d8]">
             {prompt || "Move the slider, then send"}
           </p>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className={
-            variant === "dock"
-              ? "shrink-0 text-xs text-zinc-500 underline"
-              : "shrink-0 text-[11px] text-[#6b7c88] underline"
-          }
+          className="shrink-0 text-[11px] text-[#6b7c88] underline"
         >
           Hide
         </button>
@@ -208,9 +136,7 @@ function ScaleBlock({
         labelLow={scale.label_low}
         labelHigh={scale.label_high}
         disabled={disabled}
-        scaleId={scale.id}
         onSubmit={onSubmit}
-        variant={variant}
       />
     </div>
   );
@@ -223,9 +149,7 @@ function ScaleSlider({
   labelLow,
   labelHigh,
   disabled,
-  scaleId,
   onSubmit,
-  variant,
 }: {
   min: number;
   max: number;
@@ -233,35 +157,14 @@ function ScaleSlider({
   labelLow: string;
   labelHigh: string;
   disabled?: boolean;
-  scaleId: string;
   onSubmit: (s: string) => void;
-  variant: "dock" | "inline";
 }) {
   const mid = Math.round((min + max) / 2);
   const [value, setValue] = useState(mid);
 
-  const accent =
-    variant === "inline"
-      ? "accent-teal-500"
-      : "accent-[#008069]";
-  const valueClass =
-    variant === "inline"
-      ? "text-xl font-semibold tabular-nums text-teal-400"
-      : "text-2xl font-semibold tabular-nums text-[#008069] dark:text-emerald-400";
-  const sendClass =
-    variant === "inline"
-      ? "rounded-full bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white active:opacity-90 disabled:opacity-50"
-      : "rounded-full bg-[#008069] px-4 py-2 text-sm font-semibold text-white shadow-sm active:opacity-90 disabled:opacity-50 dark:bg-emerald-600";
-
   return (
     <div className="space-y-2">
-      <div
-        className={
-          variant === "inline"
-            ? "flex justify-between text-[10px] text-[#7a8b98]"
-            : "flex justify-between text-[11px] text-zinc-500 dark:text-zinc-400"
-        }
-      >
+      <div className="flex justify-between text-[10px] text-[#7a8b98]">
         <span>{labelLow}</span>
         <span>{labelHigh}</span>
       </div>
@@ -273,31 +176,22 @@ function ScaleSlider({
         value={value}
         disabled={disabled}
         onChange={(e) => setValue(Number(e.target.value))}
-        className={cn("h-2 w-full cursor-pointer", accent)}
+        className={cn("h-2 w-full cursor-pointer accent-teal-500")}
       />
       <div className="flex items-center justify-between gap-2">
-        <span className={valueClass}>
+        <span className="text-xl font-semibold tabular-nums text-teal-400">
           {value}
-          <span
-            className={
-              variant === "inline"
-                ? "text-xs font-normal text-[#6b7c88]"
-                : "text-sm font-normal text-zinc-500"
-            }
-          >
-            {" "}
-            / {max}
-          </span>
+          <span className="text-xs font-normal text-[#6b7c88]"> / {max}</span>
         </span>
         <button
           type="button"
           disabled={disabled}
           onClick={() =>
             onSubmit(
-              `[${scaleId}] I’d rate it ${value} out of ${max} — ${labelLow} to ${labelHigh}.`,
+              `I’d rate it ${value} out of ${max} (${labelLow} to ${labelHigh}).`,
             )
           }
-          className={sendClass}
+          className="rounded-full bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white active:opacity-90 disabled:opacity-50"
         >
           Send
         </button>

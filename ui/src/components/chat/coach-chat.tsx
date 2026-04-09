@@ -1,10 +1,7 @@
 "use client";
 
 import { CHAT_CONTACTS } from "@/components/chat/contacts-data";
-import {
-  InlineInteractiveAttachments,
-  InteractivePrompt,
-} from "@/components/chat/interactive-prompt";
+import { InlineInteractiveAttachments } from "@/components/chat/interactive-prompt";
 import type { InteractivePayload } from "@/components/chat/types";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -34,6 +31,17 @@ import {
 
 /** Matches server `guardrail_max_message_chars` default. */
 const MAX_MESSAGE_CHARS = 2000;
+
+/** Hide internal prefixes in the bubble (scale id, quick-reply wrapper). */
+function displayUserBubbleText(raw: string): string {
+  let s = raw.replace(/^\[[a-zA-Z0-9_]+\]\s*/, "");
+  const lower = s.toLowerCase();
+  if (lower.startsWith("selected:")) {
+    const i = s.indexOf(":");
+    s = (i >= 0 ? s.slice(i + 1) : s).trim();
+  }
+  return s;
+}
 
 const CHAT_BG_STYLE: CSSProperties = {
   backgroundColor: "#080c10",
@@ -664,7 +672,9 @@ function ReebaChatPanel({ onBackToList }: PanelProps) {
                           )}
                         >
                           <p className="whitespace-pre-wrap break-words">
-                            {m.content}
+                            {m.role === "user"
+                              ? displayUserBubbleText(m.content)
+                              : m.content}
                             {m.streaming && m.content === "" && <TypingDots />}
                           </p>
                         </div>
@@ -734,14 +744,6 @@ function ReebaChatPanel({ onBackToList }: PanelProps) {
           </div>
         </div>
       )}
-
-      <InteractivePrompt
-        payload={interactive}
-        disabled={sending}
-        onChoice={(label) => void sendMessage(`Selected: ${label}`)}
-        onScaleSubmit={(summary) => void sendMessage(summary)}
-        onClose={() => setInteractive(null)}
-      />
 
       <form
         onSubmit={onSubmit}

@@ -207,7 +207,7 @@ All model names come from **environment** (`OPENAI_MODEL`, `ANTHROPIC_MODEL` in 
 
 | Component | Provider call | Typical default model | Why this setup |
 |-----------|----------------|----------------------|----------------|
-| **Main coach reply** (streaming) | `LLMClient.stream_assistant` | `gpt-4o-mini` (or your `OPENAI_MODEL`) | Good quality/cost balance for conversational coaching; streaming keeps the UI responsive. |
+| **Main coach reply** (streaming) | `LLMClient.stream_assistant` | `gpt-4.1-mini` (or your `OPENAI_MODEL`) | Fast GPT-4.1-class mini; good for conversational coaching; streaming keeps the UI responsive. |
 | **Intent classifier** | `complete_json_chat` | Same models | Small JSON schema (`intent`, `entities`, `urgency`); needs reliable structured output → OpenAI JSON mode, Anthropic with JSON instructions. |
 | **Question agent** (quick-reply chips) | `complete_json_chat` | Same | Only for `health_query` / `onboarding` when not using anxiety/fever scales; short JSON, same stack as intent. |
 | **Long-term profile extract** (post-turn, background) | `complete_json_chat` | Same | Runs after the user message is saved; occasional JSON extract into `user_memory`. |
@@ -215,7 +215,7 @@ All model names come from **environment** (`OPENAI_MODEL`, `ANTHROPIC_MODEL` in 
 | **Protocol engine** | — | *no LLM* | Rule-based triage for speed and determinism. |
 | **Episodic store** | — | *no LLM* | Keyword/tags + Postgres overlap query. |
 
-**Choosing faster models:** point `OPENAI_MODEL` at a smaller/faster chat model (e.g. keep `gpt-4o-mini` or whatever fits your budget). JSON agents use the **same** `OPENAI_MODEL` / `ANTHROPIC_MODEL` as the stream today (single config surface).
+**Choosing models:** default in repo is `gpt-4.1-mini`; override with `OPENAI_MODEL` if you prefer another id (e.g. `gpt-4o-mini`). JSON agents use the **same** `OPENAI_MODEL` / `ANTHROPIC_MODEL` as the stream (single config surface).
 
 ---
 
