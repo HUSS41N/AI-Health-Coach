@@ -352,6 +352,10 @@ docker compose up --build
 
 Ensure `server/.env` exists for the API container (`env_file` in Compose).
 
+### Railway (production)
+
+Two services (**API** + **UI**), Postgres, Upstash Redis, and env vars including **`CORS_ORIGINS`** and UI **`NEXT_PUBLIC_API_URL`** at build time. See **[docs/railway.md](docs/railway.md)** for a full checklist.
+
 ---
 
 ## Guardrails & safety (`server/guardrails/`)
