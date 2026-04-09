@@ -354,7 +354,7 @@ Ensure `server/.env` exists for the API container (`env_file` in Compose).
 
 ### Railway (production)
 
-Two services (**API** + **UI**), Postgres, Upstash Redis, and env vars including **`CORS_ORIGINS`** and UI **`NEXT_PUBLIC_API_URL`** at build time. See **[docs/railway.md](docs/railway.md)** for a full checklist.
+Two services (**API** + **UI**), Postgres, Upstash Redis, and env vars including **`CORS_ORIGINS`** and UI **`NEXT_PUBLIC_API_URL`** at build time. If Docker fails with **`requirements.txt` not found**, set the API service **Root Directory** to **`server`**, or use root **`Dockerfile.api`**. Details: **[docs/railway.md](docs/railway.md)**.
 
 ---
 

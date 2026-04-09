@@ -1,0 +1,9 @@
+# Used when building with repo root as context (Dockerfile.api)
+.git
+**/.venv
+**/__pycache__
+**/*.pyc
+*.md
+ui/node_modules
+ui/.next
+ui/.git
