@@ -4,6 +4,192 @@ WhatsApp-style **AI health coach**: **FastAPI** backend, **PostgreSQL** persiste
 
 ---
 
+## System design: HLD, LLD, and flows
+
+### High-level design (HLD)
+
+System context: who talks to what, and which external services the API depends on.
+
+```mermaid
+flowchart TB
+  subgraph actors [Actors]
+    U[User]
+  end
+  subgraph client [Client tier]
+    UI[Next.js UI]
+  end
+  subgraph api [API tier]
+    FAST[FastAPI app]
+  end
+  subgraph data [Data and models]
+    PG[(PostgreSQL)]
+    RD[(Redis / Upstash)]
+  end
+  subgraph models [LLM providers]
+    OAI[OpenAI API]
+    GROQ[Groq API]
+  end
+  U --> UI
+  UI -->|HTTPS SSE / REST| FAST
+  FAST --> PG
+  FAST --> RD
+  FAST --> OAI
+  FAST --> GROQ
+```
+
+### Low-level design (LLD)
+
+Major **Python packages** under `server/` and how the chat path wires them (simplified).
+
+```mermaid
+flowchart LR
+  subgraph entry [Entry]
+    M[main.py]
+  end
+  subgraph http [HTTP]
+    CR[chat/router.py]
+    AR[admin/router.py]
+  end
+  subgraph orchestration [Orchestration]
+    CS[chat/service.py]
+  end
+  subgraph domain [Domain logic]
+    ON[onboarding/]
+    MEM[memory/]
+    AG[agents/]
+    PR[protocol/]
+    PM[prompts/]
+  end
+  subgraph infra [Infrastructure]
+    LLM[llm/client.py]
+    GR[guardrails/]
+    RC[redis_client.py]
+    DB[db/session.py]
+    SSE[streaming/sse.py]
+  end
+  M --> CR
+  M --> AR
+  CR --> CS
+  CS --> ON
+  CS --> MEM
+  CS --> AG
+  CS --> PR
+  CS --> PM
+  CS --> LLM
+  CS --> GR
+  CS --> RC
+  CS --> DB
+  CS --> SSE
+  AR --> DB
+  AR --> PM
+```
+
+### User flow: send a message (end-to-end)
+
+From the browser through guardrails, branching (onboarding vs coach), streaming, and post-reply work.
+
+```mermaid
+flowchart TD
+  A[User sends message in UI] --> B[POST /chat/stream SSE]
+  B --> C[Rate limit + dedupe Redis]
+  C --> D[prepare_user_message guardrails]
+  D --> E{Valid input?}
+  E -->|no| F[Persist user row + fixed reply + done]
+  E -->|yes| G[Ensure user + persist user message]
+  G --> H[SSE meta + onboarding state]
+  H --> I{safety override?}
+  I -->|yes| F
+  I -->|no| J{Onboarding not done and not emergency?}
+  J -->|yes| K[apply_onboarding_turn chips + reply]
+  K --> F
+  J -->|no| L[Invalidate message cache]
+  L --> M[Parallel: intent LLM thread + build_memory_context]
+  M --> N[Protocol engine + maybe emergency boost]
+  N --> O[Question agent UI chips/scales]
+  O --> P[build_system_prompt + stream LLM]
+  P --> Q[filter_output + persist assistant]
+  Q --> R[SSE done]
+  R --> S{Committed and skip_memory?}
+  S -->|no skip| T[Background: post-chat memory work]
+  S -->|skip| U[End]
+  T --> U
+```
+
+### Memory flow: read path (same turn as the coach)
+
+How **short-term**, **profile**, **summary**, and **episodic** data are assembled for `build_system_prompt` (inside `build_memory_context` → `memory/retrieval.py`).
+
+```mermaid
+flowchart TD
+  A[build_memory_context session user_id message] --> B[load_short_term_messages]
+  B --> C{Redis coach:msgs hit?}
+  C -->|yes| D[Recent message rows JSON]
+  C -->|no| E[Query messages table + Redis set]
+  D --> F[Slice for MemoryContext vs full window for LLM]
+  E --> F
+  F --> G[get_summary_for_context]
+  G --> H{Redis summary key?}
+  H -->|miss| I[conversation_summary table]
+  H -->|hit| J[Summary text]
+  I --> J
+  F --> K[get_profile_for_context]
+  K --> L{Redis profile key?}
+  L -->|miss| M[user_memory.profile JSON]
+  L -->|hit| N[Profile dict]
+  M --> N
+  F --> O[retrieve_episodic]
+  O --> P[extract_tags from current message]
+  P --> Q{tags overlap query on episodic_memory?}
+  Q -->|rows| R[Episodic strings up to limit]
+  Q -->|no hit| S[Fallback last N episodic rows]
+  R --> T[MemoryContext + short_term for chat loop]
+  S --> T
+```
+
+### Memory flow: write path (after a successful turn)
+
+Runs only when the stream **commits** and **`skip_memory`** was not set (`chat/router.py` → `memory/tasks.py`).
+
+```mermaid
+flowchart TD
+  A[Transaction commit on /chat/stream] --> B{skip_memory set?}
+  B -->|yes| Z[No background memory]
+  B -->|no| C[BackgroundTasks run_post_chat_memory_work]
+  C --> D[apply_long_term_from_message LLM extract + merge user_memory]
+  C --> E[store_episodic_memory keyword rules + tags]
+  C --> F[maybe_refresh_summary_for_user throttled LLM merge]
+  D --> G[session.commit]
+  E --> G
+  F --> G
+  G --> H[invalidate_user_memory_caches]
+  H --> I[Delete Redis msgs profile summary keys for user]
+```
+
+### Admin / observability flow
+
+Operators use the same API origin as the chat client.
+
+```mermaid
+sequenceDiagram
+  participant Op as Browser /admin
+  participant UI as Next.js admin page
+  participant API as FastAPI
+  participant PG as PostgreSQL
+  Op->>UI: Open /admin
+  UI->>API: GET /admin/users
+  API->>PG: distinct user_ids
+  PG-->>API: rows
+  API-->>UI: JSON
+  UI->>API: GET /admin/users/{id}/overview
+  API->>PG: profile summary episodic messages
+  PG-->>API: JSON
+  API-->>UI: Messages Memory Profile tabs
+  UI->>API: GET/PATCH /admin/prompts
+  API->>PG: agent_prompts table
+```
+
+---
+
 ## How to run it locally (step by step)
 
 ### 1. Prerequisites
@@ -98,14 +284,7 @@ Optional guardrail tuning: `GUARDRAIL_MAX_MESSAGE_CHARS`, `GUARDRAIL_RATE_LIMIT_
 
 ## Architecture overview (backend)
 
-Rough **layers** (outside-in):
-
-1. **HTTP** — `main.py`: FastAPI app, CORS, lifespan, mounts **`chat/`** and **`admin/`** routers.  
-2. **Chat route** — `chat/router.py` validates input, guardrails, opens a DB session, returns **SSE** from `chat/service.py`.  
-3. **Orchestration** — `chat/service.py`: persist user message → parallel **intent** (LLM JSON) + **memory context** load → **protocol** (rules) → optional **guided onboarding** (static steps + chips) or **question agent** (scales/chips) → **streaming** coach reply via `LLMClient`. **Background** work: long-term profile extract, episodic rows, rolling summary, Redis invalidation.  
-4. **Supporting modules** — `onboarding/` (user + progress, chip choices), `memory/` (retrieval, long-term merge, episodic tags, summary), `protocol/engine.py` (triage hints), `agents/` (intent + question JSON), `prompts/` (DB-backed text + cache warm), `guardrails/`, `llm/client.py`, `streaming/sse.py`, `redis_client.py`, `db/` (models + session).
-
-The **admin** API exposes read/write for prompts and read-only style overview per `user_id` (profile, summary, episodic, messages).
+See **[System design: HLD, LLD, and flows](#system-design-hld-lld-and-flows)** for diagrams. In one pass: **`chat/router.py`** applies Redis rate limit / dedupe, **`chat/service.py`** orchestrates onboarding vs parallel **intent + `build_memory_context`**, **protocol**, **question UI**, **`build_system_prompt`**, and **streaming**; **`memory/tasks.py`** updates long-term / episodic / summary after commit. **`admin/router.py`** serves user overview and **`agent_prompts`** CRUD.
 
 ---
 
